@@ -474,7 +474,7 @@ ngx_rtmp_relay_create_connection(ngx_rtmp_conf_ctx_t *cctx, ngx_str_t* name,
     }
     c = pc->connection;
     c->pool = pool;
-    c->addr_text = rctx->url;
+    c->addr_text = addr->name;
 
     addr_conf = ngx_pcalloc(pool, sizeof(ngx_rtmp_addr_conf_t));
     if (addr_conf == NULL) {
@@ -1237,6 +1237,7 @@ ngx_rtmp_relay_on_status(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
         ngx_chain_t *in)
 {
     ngx_rtmp_relay_ctx_t       *ctx;
+    ngx_rtmp_relay_static_t    *rs;
     static struct {
         double                  trans;
         u_char                  level[32];
@@ -1300,6 +1301,10 @@ ngx_rtmp_relay_on_status(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
             "relay: onStatus: level='%s' code='%s' description='%s'",
             v.level, v.code, v.desc);
 
+    if (ctx->static_evt) {
+        rs = ctx->static_evt->data;
+        rs->target->counter = 0;
+    }
     return NGX_OK;
 }
 
@@ -1441,6 +1446,7 @@ ngx_rtmp_relay_push_pull(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     ngx_str_t                          *value, v, n;
     ngx_rtmp_relay_app_conf_t          *racf;
     ngx_rtmp_relay_target_t            *target, **t;
+    void                               *addrs;
     ngx_url_t                          *u;
     ngx_uint_t                          i;
     ngx_int_t                           is_pull, is_static;
@@ -1551,6 +1557,27 @@ ngx_rtmp_relay_push_pull(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
                                "stream name missing in static pull "
                                "declaration");
             return NGX_CONF_ERROR;
+        }
+
+        t = racf->static_pulls.elts;
+        for (i = 0; i < racf->static_pulls.nelts; i++) {
+
+            if (t[i]->name.len == target->name.len
+                && ngx_strncmp(t[i]->name.data, target->name.data, target->name.len) == 0)
+            {
+                addrs = ngx_palloc(cf->pool, (u->naddrs + t[i]->url.naddrs) * sizeof(ngx_addr_t));
+                if (addrs == NULL) {
+                    return NGX_CONF_ERROR;
+                }
+
+                ngx_memcpy(addrs, t[i]->url.addrs, t[i]->url.naddrs * sizeof(ngx_addr_t));
+                ngx_memcpy((char *)addrs + t[i]->url.naddrs * sizeof(ngx_addr_t), u->addrs, u->naddrs * sizeof(ngx_addr_t));
+
+                t[i]->url.naddrs += u->naddrs;
+                t[i]->url.addrs = addrs;
+
+                return NGX_CONF_OK;
+            }
         }
 
         ee = ngx_array_push(&racf->static_events);
